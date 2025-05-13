@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Assets.xcassets/AppIcon.appiconset/LightModeWorkdayAlertAppIcon.png" alt="Workday Alerts Logo" width="200">
+  <img src="TimedNotification/Assets.xcassets/AppIcon.appiconset/LightModeWorkdayAlertAppIcon.png" alt="Workday Alerts Logo" width="200">
 </p>
 
 <h1 align="center">Workday Alerts</h1>
