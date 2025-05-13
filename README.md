@@ -12,7 +12,7 @@ Workday Alerts is a SwiftUI iOS app that automatically schedules local reminders
 - ⏰ Clock‑in after a fixed 30 m break
 - ⏰ End‑of‑day clock‑out
 
-Each alert fires with a custom 30 s siren and a 2 minute advance warning.
+Each alert fires with default apple alarm sound and a 2 minute advance warning.
 
 ## Features
 
