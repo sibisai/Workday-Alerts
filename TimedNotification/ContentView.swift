@@ -33,7 +33,7 @@ struct ContentView: View {
                     DatePicker("Start time",
                                selection: $clockIn,
                                displayedComponents: [.hourAndMinute, .date])
-                        .datePickerStyle(.compact)
+                    .datePickerStyle(.compact)
                 }
                 
                 // LUNCH STARTS IN (NEW WHEELS) ───────────────────────
@@ -68,7 +68,7 @@ struct ContentView: View {
                         Task {
                             do {
                                 try await notifier.scheduleAlerts(clockIn: clockIn,
-                                                                   lunchStartOffset: lunchOffset)
+                                                                  lunchStartOffset: lunchOffset)
                                 HapticManager.shared.rumble()
                             } catch {
                                 errorMsg  = error.localizedDescription
@@ -99,6 +99,7 @@ struct ContentView: View {
             .alert("Invalid lunch time", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: { Text(errorMsg) }
+            .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear { Task { await notifier.refreshPending() } }
     }

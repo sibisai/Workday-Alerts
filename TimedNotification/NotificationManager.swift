@@ -28,79 +28,128 @@ enum LunchValidation: LocalizedError {
 }
 
 @MainActor
+func purgeObsoleteAndRefresh() async {
+    let center  = UNUserNotificationCenter.current()
+    let now     = Date()
+
+    // grab every request that already fired
+    let obsolete = (await center.pendingNotificationRequests())
+        .compactMap { req -> String? in
+            guard
+              let trig = req.trigger as? UNCalendarNotificationTrigger,
+              let fire = Calendar.current.date(from: trig.dateComponents),
+              fire < now
+            else { return nil }
+            return req.identifier
+        }
+
+    center.removePendingNotificationRequests(withIdentifiers: obsolete)
+    await refreshPending()           // repopulate `pending`
+}
+
+@MainActor
 final class NotificationManager: ObservableObject {
     static let shared = NotificationManager()
     private init() {}
-
+    
     @Published var pending: [ScheduledAlert] = []
-
+    
     // MARK: Permission
     func requestAuthorization() {
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
-
+    
     // MARK: Scheduling
     /// Schedules alerts. Lunch is fixed at 30 minutes.
     /// - Throws: `LunchValidation` if offset outside (0, 4 h 30 m)
     func scheduleAlerts(clockIn: Date,
-                         lunchStartOffset: TimeInterval) async throws {
+                        lunchStartOffset: TimeInterval) async throws {
         guard lunchStartOffset > 0 else { throw LunchValidation.tooEarly }
         guard lunchStartOffset < 4.5 * 3600 else { throw LunchValidation.tooLate }
-
+        
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-
+        
         let lunchDuration: TimeInterval = 30 * 60 // 30 min unpaid
-
+        
         let events: [(String, Date)] = [
             ("Clock‑out for lunch", clockIn.addingTimeInterval(lunchStartOffset)),
             ("Clock‑in after lunch", clockIn.addingTimeInterval(lunchStartOffset + lunchDuration)),
             ("Clock‑out for the day", clockIn.addingTimeInterval(8.5 * 3600)) // end of 8 h paid + 30 m lunch
         ]
-
+        
         for (title, date) in events {
-            try? await schedule(title: title, fire: date)
-            try? await schedule(title: "⏰ 2‑minute warning: \(title.lowercased())", fire: date.addingTimeInterval(-120))
+            try? await schedule(title: title, fire: date,       withLoops: true)   // real alarm
+            try? await schedule(title: "⏰ 2-minute warning: \(title.lowercased())",
+                                fire: date.addingTimeInterval(-120),
+                                withLoops: false)                                  // no loops
         }
-
+        
         await refreshPending()
     }
+    
+    // MARK: Scheduling helpers
+    private func schedule(title: String,
+                          fire start: Date,
+                          withLoops addLoops: Bool) async throws {
+        let center  = UNUserNotificationCenter.current()
+        let sound   = UNNotificationSound(named: .init("alarm.caf"))
 
-    private func schedule(title: String, fire: Date) async throws {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.sound = UNNotificationSound(named: .init("alarm.caf"))
-        content.badge = 1
-        if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
+        func makeContent(loop: Bool) -> UNMutableNotificationContent {
+            let c = UNMutableNotificationContent()
+            c.title = title
+            c.sound = sound
+            c.badge = 1
+            if #available(iOS 15.0, *) { c.interruptionLevel = .timeSensitive }
+            c.userInfo["loop"] = loop            // tag follow-ups
+            return c
+        }
 
-        // 1️⃣ initial one-shot alert
-        let mainID     = UUID().uuidString
-        let dateComps  = Calendar.current.dateComponents(
-            [.year,.month,.day,.hour,.minute,.second], from: fire)
+        // main one-shot
+        let id   = AlarmIDs.main(UUID().uuidString)
+        let comps = Calendar.current.dateComponents(
+            [.year,.month,.day,.hour,.minute,.second], from: start)
 
-        let dateTrig   = UNCalendarNotificationTrigger(dateMatching: dateComps,
-                                                       repeats: false)
-        try await UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: AlarmIDs.main(mainID),
-                                  content: content,
-                                  trigger: dateTrig))
+        try await center.add(
+            UNNotificationRequest(identifier: id,
+                                  content: makeContent(loop: false),
+                                  trigger: UNCalendarNotificationTrigger(
+                                      dateMatching: comps, repeats: false)))
 
-        // 2️⃣ repeat every 60 s until we cancel
-        let repeatTrig = UNTimeIntervalNotificationTrigger(timeInterval: 60,
-                                                           repeats: true)
-        try await UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: AlarmIDs.repeatID,
-                                  content: content,
-                                  trigger: repeatTrig))
+        // optional loop (only for real alerts, not warnings)
+        if addLoops {
+            for n in 1...10 {
+                let t   = start.addingTimeInterval(Double(n) * 60)
+                let dc  = Calendar.current.dateComponents(
+                    [.year,.month,.day,.hour,.minute,.second], from: t)
+                try await center.add(
+                    UNNotificationRequest(identifier: AlarmIDs.main("\(id)-\(n)"),
+                                          content: makeContent(loop: true),
+                                          trigger: UNCalendarNotificationTrigger(
+                                              dateMatching: dc, repeats: false)))
+            }
+        }
     }
-
-    // MARK: Fetch
+    
+    // MARK: Fetch (updates upcoming list)
     func refreshPending() async {
-        let reqs = await UNUserNotificationCenter.current().pendingNotificationRequests()
-        pending = reqs.compactMap { r in
-            guard let t = r.trigger as? UNCalendarNotificationTrigger,
-                  let d = Calendar.current.date(from: t.dateComponents) else { return nil }
-            return ScheduledAlert(id: r.identifier, title: r.content.title, fireDate: d)
-        }.sorted { $0.fireDate < $1.fireDate }
+        let now   = Date()
+        let reqs  = await UNUserNotificationCenter.current()
+                        .pendingNotificationRequests()
+
+        pending = reqs.compactMap { req -> ScheduledAlert? in
+            // skip time-interval triggers and follow-up loops
+            guard
+                req.content.userInfo["loop"] as? Bool != true,          // hide loops
+                let trig = req.trigger as? UNCalendarNotificationTrigger,
+                let fire = Calendar.current.date(from: trig.dateComponents),
+                fire > now                                              // hide past
+            else { return nil }
+
+            return ScheduledAlert(id: req.identifier,
+                                  title: req.content.title,
+                                  fireDate: fire)
+        }
+        .sorted { $0.fireDate < $1.fireDate }
     }
 }

@@ -6,7 +6,7 @@
 
 ## Description
 
-Workday Alerts is a SwiftUI iOS app that automatically schedules local reminders for:
+Workday Alerts is a SwiftUI iOS app that automatically schedules local alerts for:
 
 - ⏰ Clock‑out for lunch
 - ⏰ Clock‑in after a fixed 30 m break

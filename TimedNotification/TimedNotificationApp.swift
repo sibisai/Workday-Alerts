@@ -12,7 +12,22 @@ import UserNotifications
 @main
 struct WorkdayAlertsApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    init() { NotificationManager.shared.requestAuthorization() }
+    init() {
+        NotificationManager.shared.requestAuthorization()
+
+        // purge pending requests with a fireDate < now
+        Task {
+            let center   = UNUserNotificationCenter.current()
+            let pending  = await center.pendingNotificationRequests()   // async ✔︎
+            let obsolete = pending.compactMap { req -> String? in
+                guard let trig = req.trigger as? UNCalendarNotificationTrigger,
+                      let date = Calendar.current.date(from: trig.dateComponents),
+                      date < Date() else { return nil }
+                return req.identifier
+            }
+            center.removePendingNotificationRequests(withIdentifiers: obsolete) // sync ✔︎
+        }
+    }
 
     var body: some Scene {
         WindowGroup { ContentView() }
@@ -30,6 +45,8 @@ struct WorkdayAlertsApp: App {
                     break
                 }
             }
+        
+        
     }
 }
 
