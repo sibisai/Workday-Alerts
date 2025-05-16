@@ -28,26 +28,6 @@ enum LunchValidation: LocalizedError {
 }
 
 @MainActor
-func purgeObsoleteAndRefresh() async {
-    let center  = UNUserNotificationCenter.current()
-    let now     = Date()
-
-    // grab every request that already fired
-    let obsolete = (await center.pendingNotificationRequests())
-        .compactMap { req -> String? in
-            guard
-              let trig = req.trigger as? UNCalendarNotificationTrigger,
-              let fire = Calendar.current.date(from: trig.dateComponents),
-              fire < now
-            else { return nil }
-            return req.identifier
-        }
-
-    center.removePendingNotificationRequests(withIdentifiers: obsolete)
-    await refreshPending()           // repopulate `pending`
-}
-
-@MainActor
 final class NotificationManager: ObservableObject {
     static let shared = NotificationManager()
     private init() {}
@@ -129,6 +109,25 @@ final class NotificationManager: ObservableObject {
                                               dateMatching: dc, repeats: false)))
             }
         }
+    }
+    
+    /// Drop past requests and rebuild `pending`
+    func purgeObsoleteAndRefresh() async {
+        let center = UNUserNotificationCenter.current()
+        let now    = Date()
+
+        let obsolete = (await center.pendingNotificationRequests())
+            .compactMap { req -> String? in
+                guard
+                    let trig = req.trigger as? UNCalendarNotificationTrigger,
+                    let fire = Calendar.current.date(from: trig.dateComponents),
+                    fire < now
+                else { return nil }
+                return req.identifier
+            }
+
+        center.removePendingNotificationRequests(withIdentifiers: obsolete)
+        await refreshPending()
     }
     
     // MARK: Fetch (updates upcoming list)
